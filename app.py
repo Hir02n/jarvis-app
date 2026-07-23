@@ -24,7 +24,7 @@ except Exception as e:
     st.stop()
 
 # 最新の推奨モデル指定
-MODEL_NAME = "gemini-2.5-flash"
+MODEL_NAME = "gemini-1.5-flash"
 
 # ---------------------------------------------------------
 # 2. Google Drive からデータの初期ロード
