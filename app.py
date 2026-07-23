@@ -1,13 +1,12 @@
 import streamlit as st
-from google import genai
-from google.genai import types
+import google.generativeai as genai
 from PIL import Image
 import json
 from datetime import datetime
 from drive_utils import load_json_from_drive, save_json_to_drive
 
 # ---------------------------------------------------------
-# 1. ページ基本設定 & Gemini API 初期化 (新SDK形式)
+# 1. ページ基本設定 & Gemini API 初期化 (安定版SDK形式)
 # ---------------------------------------------------------
 st.set_page_config(
     page_title="J.A.R.V.I.S. Health System",
@@ -15,15 +14,15 @@ st.set_page_config(
     layout="wide"
 )
 
-# Secrets から API Key を取得して Client を初期化
+# Secrets から API Key を取得して初期化
 try:
     api_key = st.secrets["GEMINI_API_KEY"]
-    client = genai.Client(api_key=api_key)
+    genai.configure(api_key=api_key)
 except Exception as e:
     st.error(f"APIキーの設定エラー: {e}")
     st.stop()
 
-# Interactions API 対応のモデル指定（動的最新モデル）
+# 安定して動作する標準モデル指定
 MODEL_NAME = "gemini-1.5-flash"
 
 # ---------------------------------------------------------
@@ -82,7 +81,7 @@ with st.sidebar:
 # 5. メインUI：ヘッダー
 # ---------------------------------------------------------
 st.title("🤖 J.A.R.V.I.S. Health & Nutrition Assistant")
-st.caption("Google Drive 完全同期 | Powered by Gemini Flash")
+st.caption("Google Drive 完全同期 | Powered by Gemini 1.5 Flash")
 
 # ---------------------------------------------------------
 # 6. 入力エリア（画像アップロード ＆ チャット入力）
@@ -103,12 +102,14 @@ if user_input or uploaded_image:
     
     display_text = user_input if user_input else "【食事画像を送信しました】"
     
+    # ユーザー発言を履歴に追加
     st.session_state.chat_history.append({
         "role": "user",
         "text": display_text,
         "timestamp": now_str
     })
     
+    # 画面描画（ユーザー）
     with st.chat_message("user", avatar="👤"):
         st.caption(f"[{now_str}]")
         st.write(display_text)
@@ -136,17 +137,17 @@ if user_input or uploaded_image:
                 if user_input:
                     contents.append(f"user: {user_input}")
 
-                # SDK（google-genai）での呼び出し
-                response = client.models.generate_content(
-                    model=MODEL_NAME,
-                    contents=contents,
-                    config=types.GenerateContentConfig(
-                        system_instruction=SYSTEM_PROMPT
-                    )
+                # モデルオブジェクトの作成（google-generativeai形式）
+                model = genai.GenerativeModel(
+                    model_name=MODEL_NAME,
+                    system_instruction=SYSTEM_PROMPT
                 )
-                
+
+                # API呼び出し
+                response = model.generate_content(contents)
                 response_text = response.text
                 
+                # 画面描画（AI）
                 st.caption(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}]")
                 st.write(response_text)
                 
