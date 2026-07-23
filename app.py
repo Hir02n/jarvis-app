@@ -30,7 +30,7 @@ model = genai.GenerativeModel('gemini-2.5-flash')
 DRIVE_MEMORY_FILE = "jarvis_memory.json"
 DRIVE_NUTRITION_FILE = "nutrition_log.json"
 
-# 会話履歴の初期化
+# 会話履歴の初期化（Driveから記憶を全件読み込みます）
 if "chat_history" not in st.session_state:
     st.session_state.chat_history = load_json_from_drive(DRIVE_MEMORY_FILE, default_factory=list)
 
@@ -62,8 +62,8 @@ with st.sidebar:
     st.title("🤖 J.A.R.V.I.S. Status")
     st.success("☁️ Google Drive 同期中")
     
-    st.subheader("📊 記録データ概要")
-    st.write(f"- 会話ログ数: {len(st.session_state.chat_history)} 件")
+    st.subheader("📊 記憶データ概要")
+    st.write(f"- 保持している会話ログ数: {len(st.session_state.chat_history)} 件")
     st.write(f"- 食事ログ数: {len(st.session_state.nutrition_log)} 件")
     
     st.markdown("---")
@@ -73,27 +73,17 @@ with st.sidebar:
         st.success("最新データをロードしました！")
         st.rerun()
 
-    if st.button("🗑️ 画面表示をクリア（Drive内ログは保持）"):
-        st.session_state.chat_history = []
+    if st.button("🗑️ 画面表示をクリア"):
         st.rerun()
 
 # ---------------------------------------------------------
-# 5. メインUI：ヘッダー＆過去ログの表示
+# 5. メインUI：ヘッダー（★過去ログ描画は0件に設定）
 # ---------------------------------------------------------
 st.title("🤖 J.A.R.V.I.S. Health & Nutrition Assistant")
 st.caption("Google Drive 完全同期 | Powered by Gemini 2.5 Flash")
 
-# これまでの会話を表示
-for message in st.session_state.chat_history:
-    role = message.get("role", "user")
-    content = message.get("text", "")
-    timestamp = message.get("timestamp", "")
-    
-    avatar = "🤖" if role == "model" else "👤"
-    with st.chat_message(role, avatar=avatar):
-        if timestamp:
-            st.caption(f"[{timestamp}]")
-        st.write(content)
+# 💡【重要】画面が過去のログで埋まるのを防ぐため、
+# 過去メッセージの描画処理（for message in st.session_state.chat_history: ...）は除外しています。
 
 # ---------------------------------------------------------
 # 6. 入力エリア（画像アップロード ＆ チャット入力）
@@ -135,7 +125,7 @@ if user_input or uploaded_image:
                 # 過去の文脈を考慮するための会話構築
                 prompt_parts = [SYSTEM_PROMPT]
                 
-                # 直近の会話文脈を追加
+                # Google Drive 上に保存されている過去の会話文脈（直近5件など）をAIにしっかり渡します
                 for msg in st.session_state.chat_history[-5:]:
                     prompt_parts.append(f"{msg['role']}: {msg['text']}")
                 
