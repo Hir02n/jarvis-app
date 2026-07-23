@@ -24,22 +24,19 @@ except Exception as e:
 MODEL_NAME = "gemini-flash-latest"
 
 # ---------------------------------------------------------
-# 2. Google Drive からジャンル別データのロード
+# 2. Google Drive からデータのロード（既存の単一ファイルのみ）
 # ---------------------------------------------------------
-DRIVE_CHAT_FILE = "chat_memory.json"
+DRIVE_MEMORY_FILE = "jarvis_memory.json"
 DRIVE_NUTRITION_FILE = "nutrition_log.json"
-DRIVE_WORKOUT_FILE = "workout_log.json"
 
-if "chat_memory" not in st.session_state:
-    st.session_state.chat_memory = load_json_from_drive(DRIVE_CHAT_FILE, default_factory=list)
+# 全データ（記憶）をロード
+if "full_history" not in st.session_state:
+    st.session_state.full_history = load_json_from_drive(DRIVE_MEMORY_FILE, default_factory=list)
 
 if "nutrition_log" not in st.session_state:
     st.session_state.nutrition_log = load_json_from_drive(DRIVE_NUTRITION_FILE, default_factory=list)
 
-if "workout_log" not in st.session_state:
-    st.session_state.workout_log = load_json_from_drive(DRIVE_WORKOUT_FILE, default_factory=list)
-
-# 画面表示用のログ（最新の会話）
+# 画面表示用ログ（最新の1往復分だけを保持するリスト）
 if "display_history" not in st.session_state:
     st.session_state.display_history = []
 
@@ -57,16 +54,15 @@ SYSTEM_PROMPT = """
 """
 
 # ---------------------------------------------------------
-# 4. サイドバー（ステータス表示）
+# 4. サイドバー（元のシンプルな表示に戻しました）
 # ---------------------------------------------------------
 with st.sidebar:
     st.title("🤖 J.A.R.V.I.S. Status")
     st.success("☁️ Google Drive 完全同期中")
     
-    st.subheader("📊 ジャンル別データ蓄積数")
-    st.write(f"- 💬 会話記憶: **{len(st.session_state.chat_memory)} 件**")
-    st.write(f"- 🥗 栄養ログ: **{len(st.session_state.nutrition_log)} 件**")
-    st.write(f"- 🏋️ 運動ログ: **{len(st.session_state.workout_log)} 件**")
+    st.subheader("📊 蓄積データ（記憶）")
+    st.write(f"- 保持している会話記憶: **{len(st.session_state.full_history)} 件**")
+    st.write(f"- 記録した食事ログ: **{len(st.session_state.nutrition_log)} 件**")
     
     st.markdown("---")
     if st.button("🗑️ 画面表示をクリア（記憶は保持）"):
@@ -77,10 +73,10 @@ with st.sidebar:
 # 5. メインUI
 # ---------------------------------------------------------
 st.title("🤖 J.A.R.V.I.S. Health & Nutrition Assistant")
-st.caption("ジャンル別最適化コンテキスト | 高速＆省トークン設計")
+st.caption("画面はスッキリ | 記憶はGoogle Driveへ全追記保存")
 
 # ---------------------------------------------------------
-# 6. 会話履歴の表示（画面には最新のやり取りを表示）
+# 6. 画面表示（直近のメッセージのみ出力）
 # ---------------------------------------------------------
 for msg in st.session_state.display_history:
     avatar = "👤" if msg["role"] == "user" else "🤖"
@@ -111,7 +107,10 @@ if user_input or uploaded_image:
         "timestamp": now_str
     }
     
-    # 💡【UI改善】送信直後に画面に自分の発言を表示！
+    # 全体記憶に保存
+    st.session_state.full_history.append(user_msg)
+
+    # 1. マスターの発言を画面に即座に表示
     with st.chat_message("user", avatar="👤"):
         st.caption(f"[{now_str}]")
         st.write(display_text)
@@ -119,54 +118,33 @@ if user_input or uploaded_image:
             img = Image.open(uploaded_image)
             st.image(img, caption="送信された画像", use_column_width=True)
 
-    # 💡【UI改善】AIが考えているアニメーションを表示！
+    # 2. 考え中を表示しながら応答生成
     with st.chat_message("model", avatar="🤖"):
-        with st.spinner("J.A.R.V.I.S. がデータ照合中..."):
+        with st.spinner("J.A.R.V.I.S. が思考中..."):
             try:
-                # -----------------------------------------------------
-                # 🚀 ジャンル判定と関連ログの選択（トークン削減ロジック）
-                # -----------------------------------------------------
-                selected_context = []
-                category = "general"
-
-                # キーワード判定による参照ログの絞り込み
-                input_check = display_text.lower()
-                if uploaded_image or any(k in input_check for k in ["カロリー", "食事", "食べた", "栄養", "朝食", "昼食", "夕食", "PFC"]):
-                    category = "nutrition"
-                    # 過去の栄養ログから最新5件のみ参照
-                    selected_context = st.session_state.nutrition_log[-5:]
-                elif any(k in input_check for k in ["運動", "筋トレ", "体重", "ランニング", "ジム", "ワークアウト"]):
-                    category = "workout"
-                    # 過去の運動ログから最新5件のみ参照
-                    selected_context = st.session_state.workout_log[-5:]
-                else:
-                    # 通常会話は直近の会話履歴5件のみ参照
-                    selected_context = st.session_state.chat_memory[-5:]
-
-                # 参照コンテキストの構築
-                context_prompt = f"【カテゴリ: {category}】関連する過去ログ:\n"
-                for log_item in selected_context:
-                    context_prompt += f"- {log_item}\n"
-                context_prompt += f"\n上記を参考に、マスターの入力に対応してください:\n{display_text}"
-
-                # API呼び出し
                 model = genai.GenerativeModel(
                     model_name=MODEL_NAME,
                     system_instruction=SYSTEM_PROMPT
                 )
                 
+                # 過去の会話ログを文脈として渡す
+                context_prompt = "以下はこれまでの過去の会話の記憶です:\n"
+                for h in st.session_state.full_history[:-1]:
+                    context_prompt += f"- {h['role']}: {h['text']}\n"
+                context_prompt += f"\n上記の記憶を踏まえて、最新の入力に対応してください:\n{display_text}"
+
                 contents = []
                 if uploaded_image:
                     img = Image.open(uploaded_image)
                     contents.append(img)
-                    contents.append("この食事画像を分析し、推定カロリーと主要栄養素をレポートしてください。")
+                    contents.append("この食事画像を分析し、推定カロリーと栄養素をレポートしてください。")
                 
                 contents.append(context_prompt)
 
                 response = model.generate_content(contents)
                 response_text = response.text
                 
-                # 画面上にAIの回答を表示
+                # 回答の表示
                 st.caption(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}]")
                 st.write(response_text)
                 
@@ -175,23 +153,22 @@ if user_input or uploaded_image:
                     "text": response_text,
                     "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 }
-
-                # -----------------------------------------------------
-                # 💾 ジャンル別にGoogle Driveへ追記保存
-                # -----------------------------------------------------
-                if category == "nutrition" or uploaded_image:
-                    st.session_state.nutrition_log.append({"time": now_str, "user": display_text, "ai": response_text})
-                    save_json_to_drive(DRIVE_NUTRITION_FILE, st.session_state.nutrition_log)
-                elif category == "workout":
-                    st.session_state.workout_log.append({"time": now_str, "user": display_text, "ai": response_text})
-                    save_json_to_drive(DRIVE_WORKOUT_FILE, st.session_state.workout_log)
-                else:
-                    st.session_state.chat_memory.append(user_msg)
-                    st.session_state.chat_memory.append(ai_msg)
-                    save_json_to_drive(DRIVE_CHAT_FILE, st.session_state.chat_memory)
-
-                # 画面描画用リストを最新メッセージに更新
+                
+                # 全体記憶に追記
+                st.session_state.full_history.append(ai_msg)
+                
+                # 画面表示用に直近1往復を保持
                 st.session_state.display_history = [user_msg, ai_msg]
+                
+                # 元々ある2つのファイルへ上書き更新（新規ファイル作成は発生しません）
+                if uploaded_image:
+                    st.session_state.nutrition_log.append({
+                        "timestamp": now_str,
+                        "analysis": response_text
+                    })
+                    save_json_to_drive(DRIVE_NUTRITION_FILE, st.session_state.nutrition_log)
+
+                save_json_to_drive(DRIVE_MEMORY_FILE, st.session_state.full_history)
 
             except Exception as e:
-                st.error(f"申し訳ありません、マスター。エラーが発生いたしました: {e}")
+                st.error(f"エラーが発生いたしました: {e}")
