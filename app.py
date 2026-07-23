@@ -22,7 +22,6 @@ except Exception as e:
     st.error(f"APIキーの設定エラー: {e}")
     st.stop()
 
-# 取得されたモデルリストで最も安定しているエイリアスを指定
 MODEL_NAME = "gemini-flash-latest"
 
 # ---------------------------------------------------------
@@ -73,6 +72,7 @@ with st.sidebar:
         st.rerun()
 
     if st.button("🗑️ 画面表示をクリア"):
+        st.session_state.chat_history = []
         st.rerun()
 
 # ---------------------------------------------------------
@@ -82,7 +82,7 @@ st.title("🤖 J.A.R.V.I.S. Health & Nutrition Assistant")
 st.caption("Google Drive 完全同期 | Powered by Gemini")
 
 # ---------------------------------------------------------
-# 6. 過去ログの表示
+# 6. 会話履歴の描画（画面上にはここだけでメッセージを描画します）
 # ---------------------------------------------------------
 for msg in st.session_state.chat_history:
     avatar = "👤" if msg["role"] == "user" else "🤖"
@@ -101,7 +101,7 @@ with col1:
 user_input = st.chat_input("マスター、何かお手伝いできることはありますか？")
 
 # ---------------------------------------------------------
-# 8. メッセージ送信時の処理
+# 8. メッセージ送信時の処理（データ追加とAPI実行のみ行い rerun で一括描画）
 # ---------------------------------------------------------
 if user_input or uploaded_image:
     now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -114,7 +114,6 @@ if user_input or uploaded_image:
         "timestamp": now_str
     })
 
-    # Gemini API 応答処理
     try:
         model = genai.GenerativeModel(
             model_name=MODEL_NAME,
@@ -122,18 +121,15 @@ if user_input or uploaded_image:
         )
         
         contents = []
-        
-        # 画像がある場合
         if uploaded_image:
             img = Image.open(uploaded_image)
             contents.append(img)
             contents.append("この食事画像を分析し、推定カロリーと栄養素（たんぱく質、脂質、炭水化物など）を分かりやすくレポートしてください。")
         
-        # テキスト入力がある場合
         if user_input:
             contents.append(user_input)
 
-        # 生成実行（スピナー付き）
+        # 解析処理（画面上にはスピナーのみ表示）
         with st.spinner("J.A.R.V.I.S. が解析中..."):
             response = model.generate_content(contents)
             response_text = response.text
@@ -145,7 +141,7 @@ if user_input or uploaded_image:
             "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         })
         
-        # Google Drive に保存
+        # Drive への保存
         if uploaded_image:
             st.session_state.nutrition_log.append({
                 "timestamp": now_str,
@@ -155,7 +151,7 @@ if user_input or uploaded_image:
 
         save_json_to_drive(DRIVE_MEMORY_FILE, st.session_state.chat_history)
 
-        # 🔥 ここがポイント：データの保存が終わったら画面を再描画してスッキリ表示させる
+        # 画面を一度再ロードして履歴（6のブロック）から一括描画させる
         st.rerun()
 
     except Exception as e:
