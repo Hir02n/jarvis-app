@@ -1,6 +1,5 @@
 import streamlit as st
-from google import genai
-from google.genai import types
+import google.generativeai as genai
 from PIL import Image
 import json
 from datetime import datetime
@@ -15,12 +14,16 @@ st.set_page_config(
     layout="wide"
 )
 
+# Secrets から API Key を取得して設定
 try:
     api_key = st.secrets["GEMINI_API_KEY"]
-    client = genai.Client(api_key=api_key)
+    genai.configure(api_key=api_key)
 except Exception as e:
     st.error(f"APIキーの設定エラー: {e}")
     st.stop()
+
+# 確定で動作する標準モデル
+MODEL_NAME = "gemini-1.5-flash"
 
 # ---------------------------------------------------------
 # 2. Google Drive からデータの初期ロード
@@ -89,7 +92,7 @@ with col1:
 user_input = st.chat_input("マスター、何かお手伝いできることはありますか？")
 
 # ---------------------------------------------------------
-# 7. メッセージ送信時の処理（Interactions / 最新モデル呼び出し）
+# 7. メッセージ送信時の処理
 # ---------------------------------------------------------
 if user_input or uploaded_image:
     now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -111,9 +114,15 @@ if user_input or uploaded_image:
     with st.chat_message("model", avatar="🤖"):
         with st.spinner("J.A.R.V.I.S. が解析中..."):
             try:
+                # モデルの準備
+                model = genai.GenerativeModel(
+                    model_name=MODEL_NAME,
+                    system_instruction=SYSTEM_PROMPT
+                )
+                
                 contents = []
                 
-                # 直近の会話コンテキストを追加
+                # 直近の会話テキスト
                 for msg in st.session_state.chat_history[-5:]:
                     contents.append(f"{msg['role']}: {msg['text']}")
                 
@@ -125,30 +134,9 @@ if user_input or uploaded_image:
                 if user_input:
                     contents.append(f"user: {user_input}")
 
-                # Interactions API を優先的に呼び出し
-                try:
-                    response = client.interactions.create(
-                        model="gemini-2.5-flash",
-                        input=contents,
-                        system_instruction=SYSTEM_PROMPT
-                    )
-                    # Interactions API のレスポンス解析
-                    if hasattr(response, 'outputs') and response.outputs:
-                        response_text = response.outputs[0].text
-                    elif hasattr(response, 'text'):
-                        response_text = response.text
-                    else:
-                        response_text = str(response)
-                except Exception:
-                    # フォールバック呼び出し
-                    response = client.models.generate_content(
-                        model="gemini-2.5-flash",
-                        contents=contents,
-                        config=types.GenerateContentConfig(
-                            system_instruction=SYSTEM_PROMPT
-                        )
-                    )
-                    response_text = response.text
+                # API呼び出し
+                response = model.generate_content(contents)
+                response_text = response.text
                 
                 st.caption(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}]")
                 st.write(response_text)
