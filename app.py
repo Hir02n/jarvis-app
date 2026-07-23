@@ -7,7 +7,7 @@ from datetime import datetime
 from drive_utils import load_json_from_drive, save_json_to_drive
 
 # ---------------------------------------------------------
-# 1. ページ基本設定 & Gemini API 初期化 (最新SDK)
+# 1. ページ基本設定 & Gemini API 初期化
 # ---------------------------------------------------------
 st.set_page_config(
     page_title="J.A.R.V.I.S. Health System",
@@ -15,16 +15,12 @@ st.set_page_config(
     layout="wide"
 )
 
-# Secrets から API Key を取得してクライアント生成
 try:
     api_key = st.secrets["GEMINI_API_KEY"]
     client = genai.Client(api_key=api_key)
 except Exception as e:
     st.error(f"APIキーの設定エラー: {e}")
     st.stop()
-
-# 安定して動作する標準モデル指定（プレフィックスなし）
-MODEL_NAME = "gemini-2.0-flash"
 
 # ---------------------------------------------------------
 # 2. Google Drive からデータの初期ロード
@@ -93,7 +89,7 @@ with col1:
 user_input = st.chat_input("マスター、何かお手伝いできることはありますか？")
 
 # ---------------------------------------------------------
-# 7. メッセージ送信時の処理
+# 7. メッセージ送信時の処理（Interactions / 最新モデル呼び出し）
 # ---------------------------------------------------------
 if user_input or uploaded_image:
     now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -129,16 +125,30 @@ if user_input or uploaded_image:
                 if user_input:
                     contents.append(f"user: {user_input}")
 
-                # 最新SDK（google-genai）での呼び出し
-                response = client.models.generate_content(
-                    model=MODEL_NAME,
-                    contents=contents,
-                    config=types.GenerateContentConfig(
+                # Interactions API を優先的に呼び出し
+                try:
+                    response = client.interactions.create(
+                        model="gemini-2.5-flash",
+                        input=contents,
                         system_instruction=SYSTEM_PROMPT
                     )
-                )
-                
-                response_text = response.text
+                    # Interactions API のレスポンス解析
+                    if hasattr(response, 'outputs') and response.outputs:
+                        response_text = response.outputs[0].text
+                    elif hasattr(response, 'text'):
+                        response_text = response.text
+                    else:
+                        response_text = str(response)
+                except Exception:
+                    # フォールバック呼び出し
+                    response = client.models.generate_content(
+                        model="gemini-2.5-flash",
+                        contents=contents,
+                        config=types.GenerateContentConfig(
+                            system_instruction=SYSTEM_PROMPT
+                        )
+                    )
+                    response_text = response.text
                 
                 st.caption(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}]")
                 st.write(response_text)
