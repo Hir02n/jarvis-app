@@ -24,7 +24,7 @@ except Exception as e:
     st.stop()
 
 # 安定して動作する標準モデル指定（プレフィックスなし）
-MODEL_NAME = "gemini-2.5-flash"
+MODEL_NAME = "gemini-2.0-flash"
 
 # ---------------------------------------------------------
 # 2. Google Drive からデータの初期ロード
