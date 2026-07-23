@@ -21,8 +21,8 @@ except Exception as e:
     st.error(f"APIキーの設定エラー: {e}")
     st.stop()
 
-# モデルの読み込み (Gemini 2.0 Flash)
-model = genai.GenerativeModel('gemini-2.0-flash')
+# 最新の Flash モデル（自動アップデート版）を指定
+model = genai.GenerativeModel('gemini-flash-latest')
 # ---------------------------------------------------------
 # 2. Google Drive からデータの初期ロード
 # ---------------------------------------------------------
