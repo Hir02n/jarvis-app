@@ -24,7 +24,7 @@ except Exception as e:
     st.stop()
 
 # Interactions API 対応のモデル指定（動的最新モデル）
-MODEL_NAME = "gemini-1.5-flash"
+MODEL_NAME = "models/gemini-2.0-flash"
 
 # ---------------------------------------------------------
 # 2. Google Drive からデータの初期ロード
