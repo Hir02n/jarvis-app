@@ -107,64 +107,56 @@ if user_input or uploaded_image:
     now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     display_text = user_input if user_input else "【食事画像を送信しました】"
     
-    # ユーザー発言を記録
+    # ユーザー発言を履歴に追加
     st.session_state.chat_history.append({
         "role": "user",
         "text": display_text,
         "timestamp": now_str
     })
-    
-    with st.chat_message("user", avatar="👤"):
-        st.caption(f"[{now_str}]")
-        st.write(display_text)
-        if uploaded_image:
-            img = Image.open(uploaded_image)
-            st.image(img, caption="送信された画像", use_column_width=True)
 
     # Gemini API 応答処理
-    with st.chat_message("model", avatar="🤖"):
+    try:
+        model = genai.GenerativeModel(
+            model_name=MODEL_NAME,
+            system_instruction=SYSTEM_PROMPT
+        )
+        
+        contents = []
+        
+        # 画像がある場合
+        if uploaded_image:
+            img = Image.open(uploaded_image)
+            contents.append(img)
+            contents.append("この食事画像を分析し、推定カロリーと栄養素（たんぱく質、脂質、炭水化物など）を分かりやすくレポートしてください。")
+        
+        # テキスト入力がある場合
+        if user_input:
+            contents.append(user_input)
+
+        # 生成実行（スピナー付き）
         with st.spinner("J.A.R.V.I.S. が解析中..."):
-            try:
-                model = genai.GenerativeModel(
-                    model_name=MODEL_NAME,
-                    system_instruction=SYSTEM_PROMPT
-                )
-                
-                contents = []
-                
-                # 画像がある場合
-                if uploaded_image:
-                    img = Image.open(uploaded_image)
-                    contents.append(img)
-                    contents.append("この食事画像を分析し、推定カロリーと栄養素（たんぱく質、脂質、炭水化物など）を分かりやすくレポートしてください。")
-                
-                # テキスト入力がある場合
-                if user_input:
-                    contents.append(user_input)
+            response = model.generate_content(contents)
+            response_text = response.text
+        
+        # 応答を履歴に追加
+        st.session_state.chat_history.append({
+            "role": "model",
+            "text": response_text,
+            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        })
+        
+        # Google Drive に保存
+        if uploaded_image:
+            st.session_state.nutrition_log.append({
+                "timestamp": now_str,
+                "analysis": response_text
+            })
+            save_json_to_drive(DRIVE_NUTRITION_FILE, st.session_state.nutrition_log)
 
-                # 生成実行
-                response = model.generate_content(contents)
-                response_text = response.text
-                
-                st.caption(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}]")
-                st.write(response_text)
-                
-                # 応答を履歴に追加
-                st.session_state.chat_history.append({
-                    "role": "model",
-                    "text": response_text,
-                    "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                })
-                
-                # Google Drive に保存
-                if uploaded_image:
-                    st.session_state.nutrition_log.append({
-                        "timestamp": now_str,
-                        "analysis": response_text
-                    })
-                    save_json_to_drive(DRIVE_NUTRITION_FILE, st.session_state.nutrition_log)
+        save_json_to_drive(DRIVE_MEMORY_FILE, st.session_state.chat_history)
 
-                save_json_to_drive(DRIVE_MEMORY_FILE, st.session_state.chat_history)
+        # 🔥 ここがポイント：データの保存が終わったら画面を再描画してスッキリ表示させる
+        st.rerun()
 
-            except Exception as e:
-                st.error(f"申し訳ありません、マスター。エラーが発生いたしました: {e}")
+    except Exception as e:
+        st.error(f"申し訳ありません、マスター。エラーが発生いたしました: {e}")
