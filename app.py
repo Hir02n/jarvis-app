@@ -82,7 +82,7 @@ with st.sidebar:
 # 5. メインUI：ヘッダー（過去ログの画面表示は0件に保持）
 # ---------------------------------------------------------
 st.title("🤖 J.A.R.V.I.S. Health & Nutrition Assistant")
-st.caption("Google Drive 完全同期 | Powered by Gemini 2.5 Flash")
+st.caption("Google Drive 完全同期 | Powered by Gemini 1.5 Flash")
 
 # ---------------------------------------------------------
 # 6. 入力エリア（画像アップロード ＆ チャット入力）
