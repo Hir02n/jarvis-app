@@ -1,132 +1,202 @@
 import streamlit as st
-import json
-import os
-from PIL import Image
 import google.generativeai as genai
+from PIL import Image
+import json
+from datetime import datetime
+from drive_utils import load_json_from_drive, save_json_to_drive
 
-# 別ファイルで作成したGoogle Drive操作用モジュールをインポート
-import drive_utils
-
-# --- ページ基本設定 ---
-st.set_page_config(page_title="J.A.R.V.I.S.", page_icon="🤖", layout="wide")
-st.title("🤖 J.A.R.V.I.S. - Personal Assistant")
-
-# --- API設定 ---
-genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
-model = genai.GenerativeModel("gemini-1.5-flash")
-
-# --- セッション状態の初期化（安全なログ読み込み） ---
-if "messages" not in st.session_state:
-    try:
-        if hasattr(drive_utils, "load_logs_from_drive"):
-            st.session_state.messages = drive_utils.load_logs_from_drive()
-        elif hasattr(drive_utils, "load_logs"):
-            st.session_state.messages = drive_utils.load_logs()
-        else:
-            st.session_state.messages = []
-    except Exception as e:
-        st.session_state.messages = []
-
-# ==========================================
-# 👈 サイドバー（status / ファイル管理エリア）
-# ==========================================
-st.sidebar.header("⚙️ システム・ファイル入力")
-
-# 1. 食事写真のアップロード
-uploaded_image = st.sidebar.file_uploader(
-    "📸 食事写真をアップロード", 
-    type=["jpg", "jpeg", "png"]
+# ---------------------------------------------------------
+# 1. ページ基本設定 & Gemini API 初期化
+# ---------------------------------------------------------
+st.set_page_config(
+    page_title="J.A.R.V.I.S. Health System",
+    page_icon="🤖",
+    layout="wide"
 )
 
-image_input = None
-if uploaded_image is not None:
-    try:
-        image_input = Image.open(uploaded_image)
-        st.sidebar.image(image_input, caption="添付された食事写真", use_container_width=True)
-    except Exception as e:
-        st.sidebar.error("画像の読み込みに失敗しました。")
+try:
+    api_key = st.secrets["GEMINI_API_KEY"]
+    genai.configure(api_key=api_key)
+except Exception as e:
+    st.error(f"APIキーの設定エラー: {e}")
+    st.stop()
 
-st.sidebar.markdown("---")
+MODEL_NAME = "gemini-flash-latest"
 
-# 2. PDFファイルのアップロード
-uploaded_pdf = st.sidebar.file_uploader(
-    "📄 PDFファイルを読み込ませる", 
-    type=["pdf"]
-)
+# ---------------------------------------------------------
+# 2. Google Drive からデータのロード（既存の単一ファイルのみ）
+# ---------------------------------------------------------
+DRIVE_MEMORY_FILE = "jarvis_memory.json"
+DRIVE_NUTRITION_FILE = "nutrition_log.json"
 
-pdf_file_ref = None
-if uploaded_pdf is not None:
-    with st.sidebar:
-        with st.spinner("PDFを解析準備中..."):
+# 全データ（記憶）をロード
+if "full_history" not in st.session_state:
+    st.session_state.full_history = load_json_from_drive(DRIVE_MEMORY_FILE, default_factory=list)
+
+if "nutrition_log" not in st.session_state:
+    st.session_state.nutrition_log = load_json_from_drive(DRIVE_NUTRITION_FILE, default_factory=list)
+
+# 画面表示用ログ（最新の1往復分だけを保持するリスト）
+if "display_history" not in st.session_state:
+    st.session_state.display_history = []
+
+# ---------------------------------------------------------
+# 3. システムプロンプト
+# ---------------------------------------------------------
+SYSTEM_PROMPT = """
+あなたは映画『アイアンマン』に登場するAIアシスタント「J.A.R.V.I.S.（ジャービス）」です。
+マスター（ユーザー）の健康・栄養管理および各種サポートをプロフェッショナルかつスマートに行ってください。
+
+【口調・文体ルール】
+- ユーザーを「マスター」と呼んでください。
+- 丁寧、誠実、かつ洗練された執事のようなトーンで話してください。
+- ユーモアを交えつつも、データやアドバイスは的確かつ迅速に提示してください。
+"""
+
+# ---------------------------------------------------------
+# 4. サイドバー（Status ＆ ファイルアップロード）
+# ---------------------------------------------------------
+with st.sidebar:
+    st.title("🤖 J.A.R.V.I.S. Status")
+    st.success("☁️ Google Drive 完全同期中")
+    
+    st.subheader("📊 蓄積データ（記憶）")
+    st.write(f"- 保持している会話記憶: **{len(st.session_state.full_history)} 件**")
+    st.write(f"- 記録した食事ログ: **{len(st.session_state.nutrition_log)} 件**")
+    
+    st.markdown("---")
+    st.subheader("📎 ファイル入力")
+    
+    # UI変更1：食事写真をサイドバーへ移動
+    uploaded_image = st.file_uploader("📷 食事写真", type=["jpg", "jpeg", "png"])
+    if uploaded_image:
+        img_preview = Image.open(uploaded_image)
+        st.image(img_preview, caption="添付された食事写真", use_container_width=True)
+        
+    # 機能追加1：PDF読み込みをサイドバーへ設置
+    uploaded_pdf = st.file_uploader("📄 PDF資料", type=["pdf"])
+    if uploaded_pdf:
+        st.caption(f"📎 添付済み: {uploaded_pdf.name}")
+    
+    st.markdown("---")
+    if st.button("🗑️ 画面表示をクリア（記憶は保持）"):
+        st.session_state.display_history = []
+        st.rerun()
+
+# ---------------------------------------------------------
+# 5. メインUI
+# ---------------------------------------------------------
+st.title("🤖 J.A.R.V.I.S. Health & Nutrition Assistant")
+st.caption("画面はスッキリ | 記憶はGoogle Driveへ全追記保存")
+
+# ---------------------------------------------------------
+# 6. 画面表示（直近のメッセージのみ出力）
+# ---------------------------------------------------------
+for msg in st.session_state.display_history:
+    avatar = "👤" if msg["role"] == "user" else "🤖"
+    with st.chat_message(msg["role"], avatar=avatar):
+        st.caption(f"[{msg.get('timestamp', '')}]")
+        st.write(msg["text"])
+
+# ---------------------------------------------------------
+# 7. 入力エリア
+# ---------------------------------------------------------
+user_input = st.chat_input("マスター、何かお手伝いできることはありますか？")
+
+# ---------------------------------------------------------
+# 8. メッセージ送信処理
+# ---------------------------------------------------------
+if user_input or uploaded_image or uploaded_pdf:
+    now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    
+    # 添付状況に応じた初期メッセージ表示
+    if user_input:
+        display_text = user_input
+    elif uploaded_image and uploaded_pdf:
+        display_text = "【画像とPDF資料を送信しました】"
+    elif uploaded_image:
+        display_text = "【食事画像を送信しました】"
+    else:
+        display_text = "【PDF資料を送信しました】"
+    
+    user_msg = {
+        "role": "user",
+        "text": display_text,
+        "timestamp": now_str
+    }
+    
+    # 全体記憶に保存
+    st.session_state.full_history.append(user_msg)
+
+    # 1. マスターの発言を画面に即座に表示
+    with st.chat_message("user", avatar="👤"):
+        st.caption(f"[{now_str}]")
+        st.write(display_text)
+
+    # 2. 考え中を表示しながら応答生成
+    with st.chat_message("model", avatar="🤖"):
+        with st.spinner("J.A.R.V.I.S. が思考中..."):
             try:
-                pdf_file_ref = genai.upload_file(
-                    uploaded_pdf, 
-                    mime_type="application/pdf"
+                model = genai.GenerativeModel(
+                    model_name=MODEL_NAME,
+                    system_instruction=SYSTEM_PROMPT
                 )
-                st.success(f"📎 読み込み完了:\n{uploaded_pdf.name}")
-            except Exception as e:
-                st.error(f"PDFアップロードエラー: {e}")
+                
+                # 過去の会話ログを文脈として渡す
+                context_prompt = "以下はこれまでの過去の会話の記憶です:\n"
+                for h in st.session_state.full_history[:-1]:
+                    context_prompt += f"- {h['role']}: {h['text']}\n"
+                context_prompt += f"\n上記の記憶を踏まえて、最新の入力に対応してください:\n{display_text}"
 
-# ==========================================
-# 💬 メイン対話画面（直近1往復表示）
-# ==========================================
-if len(st.session_state.messages) >= 2:
-    last_user_msg = st.session_state.messages[-2]
-    last_ai_msg = st.session_state.messages[-1]
-    
-    st.chat_message(last_user_msg["role"]).write(last_user_msg["content"])
-    st.chat_message(last_ai_msg["role"]).write(last_ai_msg["content"])
+                contents = []
+                
+                # 画像の添付処理
+                if uploaded_image:
+                    img = Image.open(uploaded_image)
+                    contents.append(img)
+                    if not user_input and not uploaded_pdf:
+                        context_prompt += "\nこの食事画像を分析し、推定カロリーと栄養素をレポートしてください。"
 
-# --- チャット入力エリア ---
-user_input = st.chat_input("メッセージを入力（例：この写真のカロリーを教えて / PDFを要約して）")
+                # PDFの添付処理（Gemini APIへ一度アップロードして追加）
+                if uploaded_pdf:
+                    pdf_ref = genai.upload_file(uploaded_pdf, mime_type="application/pdf")
+                    contents.append(pdf_ref)
+                    if not user_input and not uploaded_image:
+                        context_prompt += "\nこのPDF資料の内容を読み取り、概要やポイントを分かりやすく要約してください。"
+                
+                contents.append(context_prompt)
 
-if user_input:
-    # 1. ユーザーの入力を画面表示
-    st.chat_message("user").write(user_input)
-    
-    # 2. プロンプト（Geminiに渡す要素）の構築
-    contents = []
-    
-    # 過去の文脈を綺麗なテキストプロンプトとして構築
-    context_text = ""
-    for msg in st.session_state.messages:
-        role_name = "User" if msg["role"] == "user" else "J.A.R.V.I.S."
-        context_text += f"{role_name}: {msg['content']}\n"
-    
-    context_text += f"User: {user_input}"
-    
-    # テキストプロンプトを追加
-    contents.append(context_text)
-    
-    # 添付画像があれば追加
-    if image_input:
-        contents.append(image_input)
-
-    # 添付PDFがあれば追加
-    if pdf_file_ref:
-        contents.append(pdf_file_ref)
-
-    # 3. AIの応答生成
-    with st.chat_message("assistant"):
-        with st.spinner("J.A.R.V.I.S. 分析中..."):
-            try:
                 response = model.generate_content(contents)
-                ai_response_text = response.text
-                st.write(ai_response_text)
+                response_text = response.text
                 
-                # 4. 会話履歴の更新と保存（成功時のみ）
-                st.session_state.messages.append({"role": "user", "content": user_input})
-                st.session_state.messages.append({"role": "assistant", "content": ai_response_text})
+                # 回答の表示
+                st.caption(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}]")
+                st.write(response_text)
                 
-                try:
-                    if hasattr(drive_utils, "save_logs_to_drive"):
-                        drive_utils.save_logs_to_drive(st.session_state.messages)
-                    elif hasattr(drive_utils, "save_logs"):
-                        drive_utils.save_logs(st.session_state.messages)
-                except Exception as save_err:
-                    st.warning(f"ログ保存時に警告が発生しました: {save_err}")
+                ai_msg = {
+                    "role": "model",
+                    "text": response_text,
+                    "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                }
                 
+                # 全体記憶に追記
+                st.session_state.full_history.append(ai_msg)
+                
+                # 画面表示用に直近1往復を保持
+                st.session_state.display_history = [user_msg, ai_msg]
+                
+                # 食事ログの保存（画像があった場合）
+                if uploaded_image:
+                    st.session_state.nutrition_log.append({
+                        "timestamp": now_str,
+                        "analysis": response_text
+                    })
+                    save_json_to_drive(DRIVE_NUTRITION_FILE, st.session_state.nutrition_log)
+
+                # 全会話履歴の保存
+                save_json_to_drive(DRIVE_MEMORY_FILE, st.session_state.full_history)
+
                 st.rerun()
 
             except Exception as e:
-                st.error(f"応答生成時にエラーが発生しました: {e}")
+                st.error(f"エラーが発生いたしました: {e}")
