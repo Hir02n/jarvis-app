@@ -24,17 +24,7 @@ except Exception as e:
     st.stop()
 
 # 利用可能なモデルを自動取得して最新のものを使う
-try:
-    available_models = [
-        m.name for m in client.models.list() 
-        if "generateContent" in getattr(m, "supported_actions", [])
-    ]
-    # 'flash' を含む最新モデルを優先（見つからなければリストの先頭）
-    flash_models = [m for m in available_models if "flash" in m]
-    MODEL_NAME = flash_models[0] if flash_models else available_models[0]
-except Exception:
-    # 万が一のフォールバック
-    MODEL_NAME = "gemini-2.5-flash"
+MODEL_NAME = "gemini-2.5-flash"
 
 # ---------------------------------------------------------
 # 2. Google Drive からデータの初期ロード
