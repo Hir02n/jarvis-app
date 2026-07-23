@@ -1,74 +1,174 @@
-import json
-import io
 import streamlit as st
-from google.oauth2 import service_account
-from googleapiclient.discovery import build
-from googleapiclient.http import MediaIoBaseDownload, MediaIoBaseUpload
+import google.generativeai as genai
+from PIL import Image
+import json
+from datetime import datetime
+from drive_utils import load_json_from_drive, save_json_to_drive
 
-def get_drive_service():
-    """st.secrets の gcp_service_account 情報を使ってDrive APIサービスを作成"""
-    credentials = service_account.Credentials.from_service_account_info(
-        st.secrets["gcp_service_account"],
-        scopes=["https://www.googleapis.com/auth/drive"]
-    )
-    return build('drive', 'v3', credentials=credentials)
+# ---------------------------------------------------------
+# 1. ページ基本設定 & Gemini API 初期化
+# ---------------------------------------------------------
+st.set_page_config(
+    page_title="J.A.R.V.I.S. Health System",
+    page_icon="🤖",
+    layout="wide"
+)
 
-def load_json_from_drive(filename: str, default_factory=list):
-    """
-    Google Drive上の指定フォルダからJSONファイルを読み込む。
-    ファイルが存在しない場合は空の構造（デフォルトは [] や {}）を返す。
-    """
-    service = get_drive_service()
-    folder_id = st.secrets["DRIVE_FOLDER_ID"]
-    
-    # フォルダ内の指定ファイルを検索
-    query = f"'{folder_id}' in parents and name='{filename}' and trashed=false"
-    results = service.files().list(q=query, fields="files(id, name)").execute()
-    items = results.get('files', [])
-    
-    if not items:
-        # ファイルが存在しない場合は初期データを返す
-        return default_factory()
-    
-    # ファイルが存在すればダウンロードしてJSONパース
-    file_id = items[0]['id']
-    request = service.files().get_media(fileId=file_id)
-    fh = io.BytesIO()
-    downloader = MediaIoBaseDownload(fh, request)
-    done = False
-    while not done:
-        _, done = downloader.next_chunk()
-    
-    fh.seek(0)
-    try:
-        return json.loads(fh.read().decode('utf-8'))
-    except Exception:
-        return default_factory()
+try:
+    api_key = st.secrets["GEMINI_API_KEY"]
+    genai.configure(api_key=api_key)
+except Exception as e:
+    st.error(f"APIキーの設定エラー: {e}")
+    st.stop()
 
-def save_json_to_drive(filename: str, data):
-    """
-    データ(Python辞書やリスト)をJSON化し、Google Drive上の指定フォルダに上書き・新規保存する。
-    """
-    service = get_drive_service()
-    folder_id = st.secrets["DRIVE_FOLDER_ID"]
+MODEL_NAME = "gemini-flash-latest"
+
+# ---------------------------------------------------------
+# 2. Google Drive からデータのロード（既存の単一ファイルのみ）
+# ---------------------------------------------------------
+DRIVE_MEMORY_FILE = "jarvis_memory.json"
+DRIVE_NUTRITION_FILE = "nutrition_log.json"
+
+# 全データ（記憶）をロード
+if "full_history" not in st.session_state:
+    st.session_state.full_history = load_json_from_drive(DRIVE_MEMORY_FILE, default_factory=list)
+
+if "nutrition_log" not in st.session_state:
+    st.session_state.nutrition_log = load_json_from_drive(DRIVE_NUTRITION_FILE, default_factory=list)
+
+# 画面表示用ログ（最新の1往復分だけを保持するリスト）
+if "display_history" not in st.session_state:
+    st.session_state.display_history = []
+
+# ---------------------------------------------------------
+# 3. システムプロンプト
+# ---------------------------------------------------------
+SYSTEM_PROMPT = """
+あなたは映画『アイアンマン』に登場するAIアシスタント「J.A.R.V.I.S.（ジャービス）」です。
+マスター（ユーザー）の健康・栄養管理をプロフェッショナルかつスマートにサポートしてください。
+
+【口調・文体ルール】
+- ユーザーを「マスター」と呼んでください。
+- 丁寧、誠実、かつ洗練された執事のようなトーンで話してください。
+- ユーモアを交えつつも、データやアドバイスは的確かつ迅速に提示してください。
+"""
+
+# ---------------------------------------------------------
+# 4. サイドバー（元のシンプルな表示に戻しました）
+# ---------------------------------------------------------
+with st.sidebar:
+    st.title("🤖 J.A.R.V.I.S. Status")
+    st.success("☁️ Google Drive 完全同期中")
     
-    # JSON文字列に変換
-    json_str = json.dumps(data, ensure_ascii=False, indent=4)
-    media = MediaIoBaseUpload(io.BytesIO(json_str.encode('utf-8')), mimetype='application/json')
+    st.subheader("📊 蓄積データ（記憶）")
+    st.write(f"- 保持している会話記憶: **{len(st.session_state.full_history)} 件**")
+    st.write(f"- 記録した食事ログ: **{len(st.session_state.nutrition_log)} 件**")
     
-    # 既存ファイルを検索
-    query = f"'{folder_id}' in parents and name='{filename}' and trashed=false"
-    results = service.files().list(q=query, fields="files(id, name)").execute()
-    items = results.get('files', [])
+    st.markdown("---")
+    if st.button("🗑️ 画面表示をクリア（記憶は保持）"):
+        st.session_state.display_history = []
+        st.rerun()
+
+# ---------------------------------------------------------
+# 5. メインUI
+# ---------------------------------------------------------
+st.title("🤖 J.A.R.V.I.S. Health & Nutrition Assistant")
+st.caption("画面はスッキリ | 記憶はGoogle Driveへ全追記保存")
+
+# ---------------------------------------------------------
+# 6. 画面表示（直近のメッセージのみ出力）
+# ---------------------------------------------------------
+for msg in st.session_state.display_history:
+    avatar = "👤" if msg["role"] == "user" else "🤖"
+    with st.chat_message(msg["role"], avatar=avatar):
+        st.caption(f"[{msg.get('timestamp', '')}]")
+        st.write(msg["text"])
+
+# ---------------------------------------------------------
+# 7. 入力エリア
+# ---------------------------------------------------------
+col1, col2 = st.columns([1, 4])
+
+with col1:
+    uploaded_image = st.file_uploader("📷 食事写真", type=["jpg", "jpeg", "png"])
+
+user_input = st.chat_input("マスター、何かお手伝いできることはありますか？")
+
+# ---------------------------------------------------------
+# 8. メッセージ送信処理
+# ---------------------------------------------------------
+if user_input or uploaded_image:
+    now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    display_text = user_input if user_input else "【食事画像を送信しました】"
     
-    if items:
-        # 既存ファイルを更新
-        file_id = items[0]['id']
-        service.files().update(fileId=file_id, media_body=media).execute()
-    else:
-        # 新規ファイルを作成
-        file_metadata = {
-            'name': filename,
-            'parents': [folder_id]
-        }
-        service.files().create(body=file_metadata, media_body=media, fields='id').execute()
+    user_msg = {
+        "role": "user",
+        "text": display_text,
+        "timestamp": now_str
+    }
+    
+    # 全体記憶に保存
+    st.session_state.full_history.append(user_msg)
+
+    # 1. マスターの発言を画面に即座に表示
+    with st.chat_message("user", avatar="👤"):
+        st.caption(f"[{now_str}]")
+        st.write(display_text)
+        if uploaded_image:
+            img = Image.open(uploaded_image)
+            st.image(img, caption="送信された画像", use_column_width=True)
+
+    # 2. 考え中を表示しながら応答生成
+    with st.chat_message("model", avatar="🤖"):
+        with st.spinner("J.A.R.V.I.S. が思考中..."):
+            try:
+                model = genai.GenerativeModel(
+                    model_name=MODEL_NAME,
+                    system_instruction=SYSTEM_PROMPT
+                )
+                
+                # 過去の会話ログを文脈として渡す
+                context_prompt = "以下はこれまでの過去の会話の記憶です:\n"
+                for h in st.session_state.full_history[:-1]:
+                    context_prompt += f"- {h['role']}: {h['text']}\n"
+                context_prompt += f"\n上記の記憶を踏まえて、最新の入力に対応してください:\n{display_text}"
+
+                contents = []
+                if uploaded_image:
+                    img = Image.open(uploaded_image)
+                    contents.append(img)
+                    contents.append("この食事画像を分析し、推定カロリーと栄養素をレポートしてください。")
+                
+                contents.append(context_prompt)
+
+                response = model.generate_content(contents)
+                response_text = response.text
+                
+                # 回答の表示
+                st.caption(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}]")
+                st.write(response_text)
+                
+                ai_msg = {
+                    "role": "model",
+                    "text": response_text,
+                    "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                }
+                
+                # 全体記憶に追記
+                st.session_state.full_history.append(ai_msg)
+                
+                # 画面表示用に直近1往復を保持
+                st.session_state.display_history = [user_msg, ai_msg]
+                
+                # 元々ある2つのファイルへ上書き更新（新規ファイル作成は発生しません）
+                if uploaded_image:
+                    st.session_state.nutrition_log.append({
+                        "timestamp": now_str,
+                        "analysis": response_text
+                    })
+                    save_json_to_drive(DRIVE_NUTRITION_FILE, st.session_state.nutrition_log)
+
+                save_json_to_drive(DRIVE_MEMORY_FILE, st.session_state.full_history)
+
+            except Exception as e:
+                st.error(f"エラーが発生いたしました: {e}")
