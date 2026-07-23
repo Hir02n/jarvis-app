@@ -2,7 +2,7 @@ import streamlit as st
 import json
 import os
 from PIL import Image
-import google.generativeai as genai  # 👈 ここを変更
+import google.generativeai as genai
 
 # 別ファイルで作成したGoogle Drive操作用モジュールをインポート
 import drive_utils
@@ -12,12 +12,18 @@ st.set_page_config(page_title="J.A.R.V.I.S.", page_icon="🤖", layout="wide")
 st.title("🤖 J.A.R.V.I.S. - Personal Assistant")
 
 # --- API設定 ---
-genai.configure(api_key=st.secrets["GEMINI_API_KEY"]) # 👈 ここを変更
-model = genai.GenerativeModel("gemini-1.5-flash")     # 👈 モデル指定
+genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
+model = genai.GenerativeModel("gemini-1.5-flash")
 
-# --- セッション状態の初期化 ---
+# --- セッション状態の初期化（安全なログ読み込み） ---
 if "messages" not in st.session_state:
-    st.session_state.messages = drive_utils.load_logs_from_drive()
+    # drive_utils内にload_logs_from_driveがあるか安全に確認
+    if hasattr(drive_utils, "load_logs_from_drive"):
+        st.session_state.messages = drive_utils.load_logs_from_drive()
+    elif hasattr(drive_utils, "load_logs"): # 別名で実装されていた場合のケア
+        st.session_state.messages = drive_utils.load_logs()
+    else:
+        st.session_state.messages = []
 
 # ==========================================
 # 👈 サイドバー（status / ファイル管理エリア）
@@ -47,7 +53,6 @@ pdf_file_ref = None
 if uploaded_pdf is not None:
     with st.sidebar:
         with st.spinner("PDFを解析準備中..."):
-            # 従来SDKでのファイルアップロード処理 👈 ここを変更
             pdf_file_ref = genai.upload_file(
                 uploaded_pdf, 
                 mime_type="application/pdf"
@@ -72,7 +77,7 @@ if user_input:
     # 1. ユーザーの入力を表示
     st.chat_message("user").write(user_input)
     
-    # 2. プロンプト（Geminiに渡す要素）の構築
+    # 2. プロンプトの構築
     contents = []
     
     # 過去の会話文脈
@@ -93,7 +98,7 @@ if user_input:
     # 3. AIの応答生成
     with st.chat_message("assistant"):
         with st.spinner("J.A.R.V.I.S. 分析中..."):
-            response = model.generate_content(contents) # 👈 ここを変更
+            response = model.generate_content(contents)
             ai_response_text = response.text
             st.write(ai_response_text)
 
@@ -101,6 +106,10 @@ if user_input:
     st.session_state.messages.append({"role": "user", "content": user_input})
     st.session_state.messages.append({"role": "assistant", "content": ai_response_text})
     
-    drive_utils.save_logs_to_drive(st.session_state.messages)
+    # Drive保存関数の呼び分け（安全策）
+    if hasattr(drive_utils, "save_logs_to_drive"):
+        drive_utils.save_logs_to_drive(st.session_state.messages)
+    elif hasattr(drive_utils, "save_logs"):
+        drive_utils.save_logs(st.session_state.messages)
     
     st.rerun()
