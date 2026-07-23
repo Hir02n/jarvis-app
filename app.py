@@ -23,8 +23,8 @@ except Exception as e:
     st.error(f"APIキーの設定エラー: {e}")
     st.stop()
 
-# 利用可能なモデルを自動取得して最新のものを使う
-MODEL_NAME = "gemini-flash"
+# 2026年現在の最新標準モデルを指定
+MODEL_NAME = "gemini-2.0-flash"
 
 # ---------------------------------------------------------
 # 2. Google Drive からデータの初期ロード
@@ -82,7 +82,9 @@ with st.sidebar:
 # 5. メインUI：ヘッダー（過去ログの画面表示は0件に保持）
 # ---------------------------------------------------------
 st.title("🤖 J.A.R.V.I.S. Health & Nutrition Assistant")
-st.caption("Google Drive 完全同期 | Powered by Gemini 1.5 Flash")
+st.caption("Google Drive 完全同期 | Powered by Gemini 2.0 Flash")
+
+# 💡 画面を過去ログで埋めないため、画面描画のループ処理は除外しています
 
 # ---------------------------------------------------------
 # 6. 入力エリア（画像アップロード ＆ チャット入力）
@@ -123,7 +125,7 @@ if user_input or uploaded_image:
                 # コンテンツリストの作成
                 contents = []
                 
-                # 直近の会話コンテキストを追加
+                # 直近の過去会話コンテキスト（記憶）を追加
                 for msg in st.session_state.chat_history[-5:]:
                     contents.append(f"{msg['role']}: {msg['text']}")
                 
@@ -136,7 +138,7 @@ if user_input or uploaded_image:
                 if user_input:
                     contents.append(f"user: {user_input}")
 
-                # 新しい API 呼び出し形式
+                # 新しい SDK（google-genai）での呼び出し
                 response = client.models.generate_content(
                     model=MODEL_NAME,
                     contents=contents,
@@ -165,7 +167,7 @@ if user_input or uploaded_image:
                     })
                     save_json_to_drive(DRIVE_NUTRITION_FILE, st.session_state.nutrition_log)
 
-                # Google Drive に会話ログを保存
+                # Google Drive に会話ログ（記憶）を保存
                 save_json_to_drive(DRIVE_MEMORY_FILE, st.session_state.chat_history)
 
             except Exception as e:
