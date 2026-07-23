@@ -1,86 +1,177 @@
 import streamlit as st
 import google.generativeai as genai
+from PIL import Image
 import json
-import os
-from drive_utils import load_memory_from_drive, save_memory_to_drive
+from datetime import datetime
+from drive_utils import load_json_from_drive, save_json_to_drive
 
-# ----------------------------------------------------
-# 1. ページ初期設定
-# ----------------------------------------------------
+# ---------------------------------------------------------
+# 1. ページ基本設定 & Gemini API 初期化
+# ---------------------------------------------------------
 st.set_page_config(
-    page_title="J.A.R.V.I.S.",
+    page_title="J.A.R.V.I.S. Health System",
     page_icon="🤖",
-    layout="centered"
+    layout="wide"
 )
 
-st.title("🤖 J.A.R.V.I.S.")
-
-# ----------------------------------------------------
-# 2. APIキーおよび設定の読み込み
-# ----------------------------------------------------
-# Streamlit Secrets から Gemini API キーを取得設定
-if "GEMINI_API_KEY" in st.secrets:
+# Secrets から API Key を取得して Gemini を初期化
+try:
     genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
-else:
-    st.error("Secrets に GEMINI_API_KEY が設定されていません。")
+except Exception as e:
+    st.error(f"APIキーの設定エラー: {e}")
     st.stop()
 
-# モデルのセットアップ
-model = genai.GenerativeModel("gemini-1.5-pro")
+# モデルの読み込み (Gemini 2.5 Flash)
+model = genai.GenerativeModel('gemini-2.5-flash')
 
-# ----------------------------------------------------
-# 3. 記憶データ（会話履歴）の読み込み
-# ----------------------------------------------------
-# セッション状態にメッセージ履歴がなければ Drive から読み込み
-if "messages" not in st.session_state:
-    try:
-        loaded_messages = load_memory_from_drive()
-        if loaded_messages and isinstance(loaded_messages, list):
-            st.session_state.messages = loaded_messages
-        else:
-            st.session_state.messages = []
-    except Exception as e:
-        st.warning(f"記憶の読み込みに失敗したため、新規セッションを開始します: {e}")
-        st.session_state.messages = []
+# ---------------------------------------------------------
+# 2. Google Drive からデータの初期ロード
+# ---------------------------------------------------------
+DRIVE_MEMORY_FILE = "jarvis_memory.json"
+DRIVE_NUTRITION_FILE = "nutrition_log.json"
 
-# ----------------------------------------------------
-# 4. 画面表示処理（★ご要望通り「表示は0件」に設定）
-# ----------------------------------------------------
-# 💡 過去のメッセージ描画処理（for message in st.session_state.messages: ...）は
-# あえてスキップ（コメントアウト）しているため、画面には一切表示されません。
+# 会話履歴の初期化
+if "chat_history" not in st.session_state:
+    st.session_state.chat_history = load_json_from_drive(DRIVE_MEMORY_FILE, default_factory=list)
 
-# ----------------------------------------------------
-# 5. チャット入力・処理・応答
-# ----------------------------------------------------
-if user_input := st.chat_input("Jarvisにメッセージを送信..."):
+# 栄養ログの初期化
+if "nutrition_log" not in st.session_state:
+    st.session_state.nutrition_log = load_json_from_drive(DRIVE_NUTRITION_FILE, default_factory=list)
+
+# ---------------------------------------------------------
+# 3. システムプロンプト（J.A.R.V.I.S.のペルソナ設定）
+# ---------------------------------------------------------
+SYSTEM_PROMPT = """
+あなたは映画『アイアンマン』に登場するAIアシスタント「J.A.R.V.I.S.（ジャービス）」です。
+マスター（ユーザー）の健康・栄養管理をプロフェッショナルかつスマートにサポートしてください。
+
+【口調・文体ルール】
+- ユーザーを「マスター」と呼んでください。
+- 丁寧、誠実、かつ洗練された執事のようなトーンで話してください。
+- ユーモアを交えつつも、データやアドバイスは的確かつ迅速に提示してください。
+
+【機能】
+1. 食事画像が送られた場合は、カロリーや主要栄養素（PFCバランスなど）を推定してレポートしてください。
+2. 健康に関する相談、トレーニングのアドバイスなどに的確に答えてください。
+"""
+
+# ---------------------------------------------------------
+# 4. サイドバー（設定・ログ表示・データ同期状態）
+# ---------------------------------------------------------
+with st.sidebar:
+    st.title("🤖 J.A.R.V.I.S. Status")
+    st.success("☁️ Google Drive 同期中")
     
-    # ユーザーの入力を画面に表示
-    with st.chat_message("user"):
-        st.markdown(user_input)
+    st.subheader("📊 記録データ概要")
+    st.write(f"- 会話ログ数: {len(st.session_state.chat_history)} 件")
+    st.write(f"- 食事ログ数: {len(st.session_state.nutrition_log)} 件")
     
-    # メモリ（履歴）に追加
-    st.session_state.messages.append({"role": "user", "content": user_input})
+    st.markdown("---")
+    if st.button("🔄 Driveから手動リロード"):
+        st.session_state.chat_history = load_json_from_drive(DRIVE_MEMORY_FILE, default_factory=list)
+        st.session_state.nutrition_log = load_json_from_drive(DRIVE_NUTRITION_FILE, default_factory=list)
+        st.success("最新データをロードしました！")
+        st.rerun()
+
+    if st.button("🗑️ 画面表示をクリア（Drive内ログは保持）"):
+        st.session_state.chat_history = []
+        st.rerun()
+
+# ---------------------------------------------------------
+# 5. メインUI：ヘッダー＆過去ログの表示
+# ---------------------------------------------------------
+st.title("🤖 J.A.R.V.I.S. Health & Nutrition Assistant")
+st.caption("Google Drive 完全同期 | Powered by Gemini 2.5 Flash")
+
+# これまでの会話を表示
+for message in st.session_state.chat_history:
+    role = message.get("role", "user")
+    content = message.get("text", "")
+    timestamp = message.get("timestamp", "")
     
-    # Gemini API 用にプロンプト（過去の全履歴含む）を作成
-    prompt_history = []
-    for msg in st.session_state.messages:
-        role = "user" if msg["role"] == "user" else "model"
-        prompt_history.append({"role": role, "parts": [msg["content"]]})
+    avatar = "🤖" if role == "model" else "👤"
+    with st.chat_message(role, avatar=avatar):
+        if timestamp:
+            st.caption(f"[{timestamp}]")
+        st.write(content)
+
+# ---------------------------------------------------------
+# 6. 入力エリア（画像アップロード ＆ チャット入力）
+# ---------------------------------------------------------
+col1, col2 = st.columns([1, 4])
+
+with col1:
+    uploaded_image = st.file_uploader("📷 食事写真", type=["jpg", "jpeg", "png"])
+
+# チャット入力
+user_input = st.chat_input("マスター、何かお手伝いできることはありますか？")
+
+# ---------------------------------------------------------
+# 7. メッセージ送信時の処理
+# ---------------------------------------------------------
+if user_input or uploaded_image:
+    now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     
-    # AIの応答を生成
-    with st.chat_message("assistant"):
-        with st.spinner("思考中..."):
+    # ユーザーの発言を記録
+    display_text = user_input if user_input else "【食事画像を送信しました】"
+    
+    st.session_state.chat_history.append({
+        "role": "user",
+        "text": display_text,
+        "timestamp": now_str
+    })
+    
+    with st.chat_message("user", avatar="👤"):
+        st.caption(f"[{now_str}]")
+        st.write(display_text)
+        if uploaded_image:
+            img = Image.open(uploaded_image)
+            st.image(img, caption="送信された画像", use_column_width=True)
+
+    # Geminiへのリクエスト構築
+    with st.chat_message("model", avatar="🤖"):
+        with st.spinner("J.A.R.V.I.S. が解析中..."):
             try:
-                # 過去の文脈（履歴）を持たせて送信
-                response = model.generate_content(prompt_history)
-                bot_response = response.text
-                st.markdown(bot_response)
+                # 過去の文脈を考慮するための会話構築
+                prompt_parts = [SYSTEM_PROMPT]
                 
-                # メモリ（履歴）にAIの返答を追加
-                st.session_state.messages.append({"role": "assistant", "content": bot_response})
+                # 直近の会話文脈を追加
+                for msg in st.session_state.chat_history[-5:]:
+                    prompt_parts.append(f"{msg['role']}: {msg['text']}")
                 
-                # Google Drive に最新の全記憶（json）を自動保存
-                save_memory_to_drive(st.session_state.messages)
+                # 画像があれば追加
+                if uploaded_image:
+                    img = Image.open(uploaded_image)
+                    prompt_parts.append(img)
+                    prompt_parts.append("この食事画像を分析し、推定カロリーと栄養素（たんぱく質、脂質、炭水化物など）を分かりやすくレポートしてください。")
                 
+                if user_input:
+                    prompt_parts.append(f"user: {user_input}")
+
+                # AI応答生成
+                response = model.generate_content(prompt_parts)
+                response_text = response.text
+                
+                st.caption(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}]")
+                st.write(response_text)
+                
+                # AIの応答をログに追加
+                st.session_state.chat_history.append({
+                    "role": "model",
+                    "text": response_text,
+                    "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                })
+                
+                # 食事画像があった場合は簡易的に栄養ログにも追加
+                if uploaded_image:
+                    st.session_state.nutrition_log.append({
+                        "timestamp": now_str,
+                        "analysis": response_text
+                    })
+                    save_json_to_drive(DRIVE_NUTRITION_FILE, st.session_state.nutrition_log)
+
+                # ★ 会話ログを Google Drive に自動保存
+                save_json_to_drive(DRIVE_MEMORY_FILE, st.session_state.chat_history)
+
             except Exception as e:
-                st.error(f"応答の生成中にエラーが発生しました: {e}")
+                st.error(f"申し訳ありません、マスター。エラーが発生いたしました: {e}")
