@@ -117,11 +117,33 @@ for msg in st.session_state.display_history:
 user_input = st.chat_input("マスター、何かお手伝いできることはありますか？")
 
 # ---------------------------------------------------------
-# 8. メッセージ送信処理
+# 8. メッセージ送信処理（ループ防止ガード付き）
 # ---------------------------------------------------------
-if user_input or uploaded_image or uploaded_pdf:
+# セッション状態に処理済みファイルの記録用変数を初期化
+if "last_processed_pdf" not in st.session_state:
+    st.session_state.last_processed_pdf = None
+
+if "last_processed_img" not in st.session_state:
+    st.session_state.last_processed_img = None
+
+# 現在選択されているファイル名を取得
+current_pdf_name = uploaded_pdf.name if uploaded_pdf else None
+current_img_name = uploaded_image.name if uploaded_image else None
+
+# 「新しいテキスト入力がある」または「新しいファイルが届いた」場合のみ実行
+has_new_user_input = bool(user_input)
+has_new_pdf = uploaded_pdf and (current_pdf_name != st.session_state.last_processed_pdf)
+has_new_img = uploaded_image and (current_img_name != st.session_state.last_processed_img)
+
+if has_new_user_input or has_new_pdf or has_new_img:
     now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     
+    # 処理済みフラグを更新（これで再描画時のループを防ぐ）
+    if uploaded_pdf:
+        st.session_state.last_processed_pdf = current_pdf_name
+    if uploaded_image:
+        st.session_state.last_processed_img = current_img_name
+
     if user_input:
         display_text = user_input
     elif uploaded_image and uploaded_pdf:
@@ -155,19 +177,26 @@ if user_input or uploaded_image or uploaded_pdf:
                 for h in st.session_state.full_history[:-1]:
                     context_prompt += f"- {h['role']}: {h['text']}\n"
                 
-                # PDFから抽出したテキストがあればプロンプトに含める
-                if pdf_text:
-                    context_prompt += f"\n【添付PDF資料の内容】:\n{pdf_text[:4000]}\n" # 長すぎる場合のカット保護
-
                 context_prompt += f"\n上記の記憶・資料を踏まえて、最新の入力に対応してください:\n{display_text}"
 
                 contents = []
                 
+                # 画像の追加
                 if uploaded_image:
                     img = Image.open(uploaded_image)
                     contents.append(img)
                     if not user_input and not uploaded_pdf:
                         context_prompt += "\nこの食事画像を分析し、推定カロリーと栄養素をレポートしてください。"
+
+                # PDFをバイト列として直接Geminiへ渡す
+                if uploaded_pdf:
+                    pdf_data = {
+                        "mime_type": "application/pdf",
+                        "data": uploaded_pdf.getvalue()
+                    }
+                    contents.append(pdf_data)
+                    if not user_input and not uploaded_image:
+                        context_prompt += "\nこのPDF資料の内容を読み取り、要約や構成案を作成してください。"
 
                 contents.append(context_prompt)
 
