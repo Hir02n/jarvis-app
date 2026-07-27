@@ -3,7 +3,14 @@ import google.generativeai as genai
 from PIL import Image
 import json
 from datetime import datetime
+from zoneinfo import ZoneInfo  # 日本時間（JST）指定用
 from drive_utils import load_json_from_drive, save_json_to_drive
+
+# ---------------------------------------------------------
+# 💡 日本時間（JST）取得用のヘルパー関数
+# ---------------------------------------------------------
+def get_jst_now_str():
+    return datetime.now(ZoneInfo("Asia/Tokyo")).strftime("%Y-%m-%d %H:%M:%S")
 
 # ---------------------------------------------------------
 # 1. ページ基本設定 & Gemini API 初期化
@@ -103,7 +110,6 @@ def classify_category(text_input, has_image, has_pdf):
 
 # 💡 安全にDrive上のログへ「確実に追記保存」するヘルパー関数
 def append_and_save_memory(filename, new_messages):
-    """Drive上の最新ファイルを読み直し、新規メッセージを確実に末尾へ追記して保存する"""
     latest_memory = load_json_from_drive(filename, default_factory=list)
     if not isinstance(latest_memory, list):
         latest_memory = []
@@ -183,7 +189,7 @@ has_new_pdf = uploaded_pdf and (current_pdf_name != st.session_state.last_proces
 has_new_img = uploaded_image and (current_img_name != st.session_state.last_processed_img)
 
 if has_new_user_input or has_new_pdf or has_new_img:
-    now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    now_str = get_jst_now_str()  # 👈 日本時間（JST）を取得
     
     if uploaded_pdf:
         st.session_state.last_processed_pdf = current_pdf_name
@@ -204,10 +210,9 @@ if has_new_user_input or has_new_pdf or has_new_img:
                 cat_info = CATEGORIES[cat_key]
                 st.session_state.last_detected_category = cat_info["name"]
                 
-                # 2. 最新の記憶をDriveから直接ロード（確実な同期）
+                # 2. 最新の記憶をDriveから直接ロード
                 current_history = load_json_from_drive(cat_info["file"], default_factory=list)
 
-                # ユーザーメッセージの作成
                 user_msg = {"role": "user", "text": display_text, "timestamp": now_str}
 
                 # 3. AIモデルの呼び出し
@@ -239,13 +244,15 @@ if has_new_user_input or has_new_pdf or has_new_img:
                 response = model.generate_content(contents)
                 response_text = f"【分類: {cat_info['name']}】\n\n" + response.text
                 
-                st.caption(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}]")
+                ai_now_str = get_jst_now_str()  # 👈 AIの返答用タイムスタンプもJST
+                
+                st.caption(f"[{ai_now_str}]")
                 st.write(response_text)
                 
                 ai_msg = {
                     "role": "model",
                     "text": response.text,
-                    "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    "timestamp": ai_now_str
                 }
                 
                 st.session_state.display_history = [user_msg, {"role": "model", "text": response_text, "timestamp": ai_msg["timestamp"]}]
