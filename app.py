@@ -75,9 +75,7 @@ DRIVE_NUTRITION_FILE = "nutrition_log.json"
 # 💡 自動カテゴリ判別関数
 # ---------------------------------------------------------
 def classify_category(text_input, has_image, has_pdf):
-    """入力内容からカテゴリを自動判定する"""
     if not text_input and has_image:
-        # 画像のみでテキストがない場合は「健康（食事分析）」と仮定
         return "health"
     
     classify_prompt = f"""
@@ -101,7 +99,20 @@ def classify_category(text_input, has_image, has_pdf):
     except Exception:
         pass
     
-    return "general" # エラーや判定不能時はフリートークへ
+    return "general"
+
+# 💡 安全にDrive上のログへ「確実に追記保存」するヘルパー関数
+def append_and_save_memory(filename, new_messages):
+    """Drive上の最新ファイルを読み直し、新規メッセージを確実に末尾へ追記して保存する"""
+    latest_memory = load_json_from_drive(filename, default_factory=list)
+    if not isinstance(latest_memory, list):
+        latest_memory = []
+    
+    for msg in new_messages:
+        latest_memory.append(msg)
+        
+    save_json_to_drive(filename, latest_memory)
+    return latest_memory
 
 # ---------------------------------------------------------
 # 3. サイドバー
@@ -193,14 +204,11 @@ if has_new_user_input or has_new_pdf or has_new_img:
                 cat_info = CATEGORIES[cat_key]
                 st.session_state.last_detected_category = cat_info["name"]
                 
-                # 2. 該当カテゴリの記憶をDriveからロード
-                history_key = f"full_history_{cat_info['file']}"
-                if history_key not in st.session_state:
-                    st.session_state[history_key] = load_json_from_drive(cat_info["file"], default_factory=list)
+                # 2. 最新の記憶をDriveから直接ロード（確実な同期）
+                current_history = load_json_from_drive(cat_info["file"], default_factory=list)
 
-                # ユーザーメッセージを追記
+                # ユーザーメッセージの作成
                 user_msg = {"role": "user", "text": display_text, "timestamp": now_str}
-                st.session_state[history_key].append(user_msg)
 
                 # 3. AIモデルの呼び出し
                 model = genai.GenerativeModel(
@@ -209,7 +217,7 @@ if has_new_user_input or has_new_pdf or has_new_img:
                 )
                 
                 context_prompt = f"以下はこれまでの「{cat_info['name']}」に関する記憶です:\n"
-                for h in st.session_state[history_key][:-1]:
+                for h in current_history:
                     context_prompt += f"- {h['role']}: {h['text']}\n"
                 
                 context_prompt += f"\n上記の記憶・資料を踏まえて、最新の入力に対応してください:\n{display_text}"
@@ -240,18 +248,16 @@ if has_new_user_input or has_new_pdf or has_new_img:
                     "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 }
                 
-                st.session_state[history_key].append(ai_msg)
                 st.session_state.display_history = [user_msg, {"role": "model", "text": response_text, "timestamp": ai_msg["timestamp"]}]
                 
-                # 健康管理の場合の栄養ログ保存
-                if cat_key == "health" and uploaded_image:
-                    if "nutrition_log" not in st.session_state:
-                        st.session_state.nutrition_log = load_json_from_drive(DRIVE_NUTRITION_FILE, default_factory=list)
-                    st.session_state.nutrition_log.append({"timestamp": now_str, "analysis": response.text})
-                    save_json_to_drive(DRIVE_NUTRITION_FILE, st.session_state.nutrition_log)
+                # 4. Driveへの「確実な追加保存（append）」の実行
+                append_and_save_memory(cat_info["file"], [user_msg, ai_msg])
 
-                # 判定されたカテゴリのDriveファイルへ保存
-                save_json_to_drive(cat_info["file"], st.session_state[history_key])
+                # 健康管理の場合の栄養ログ追加保存
+                if cat_key == "health" and uploaded_image:
+                    nutrition_log = load_json_from_drive(DRIVE_NUTRITION_FILE, default_factory=list)
+                    nutrition_log.append({"timestamp": now_str, "analysis": response.text})
+                    save_json_to_drive(DRIVE_NUTRITION_FILE, nutrition_log)
 
                 st.rerun()
 
