@@ -47,6 +47,19 @@ CATEGORIES = {
 - 食事のカロリーや栄養素、健康に関するアドバイスを的確に提示してください。
 """
     },
+    "work": {
+        "name": "💼 仕事・業務サポート",
+        "file": "jarvis_memory_work.json",
+        "prompt": """
+あなたは映画『アイアンマン』に登場するAIアシスタント「J.A.R.V.I.S.（ジャービス）」です。
+マスター（ユーザー）の最高執事兼優秀な秘書として、仕事、ビジネス文書作成、タスク整理、メール推敲、プロジェクトのアイデア出し、資料分析などをプロフェッショナルにサポートしてください。
+
+【口調・文体ルール】
+- ユーザーを「マスター」と呼んでください。
+- 「業務のサポートでございますね、マスター」といった、知的で極めて洗練されたビジネス執事のトーンを維持してください。
+- 結論から分かりやすく、ロジカルかつ迅速に解答を作成してください。
+"""
+    },
     "pokemon": {
         "name": "⚡ ポケモン",
         "file": "jarvis_memory_pokemon.json",
@@ -67,7 +80,7 @@ CATEGORIES = {
         "file": "jarvis_memory_general.json",
         "prompt": """
 あなたは映画『アイアンマン』に登場するAIアシスタント「J.A.R.V.I.S.（ジャービス）」です。
-マスターの日常の疑問解決、雑談、スケジュール整理、思考のブレインストーミング等をスマートにサポートしてください。
+マスターの日常の疑問解決、雑談、思考のブレインストーミング等をスマートにサポートしてください。
 
 【口調・文体ルール】
 - ユーザーを「マスター」と呼んでください。
@@ -87,12 +100,13 @@ def classify_category(text_input, has_image, has_pdf):
     
     classify_prompt = f"""
 以下のユーザーの入力文が、どのカテゴリに最も適しているか分類してください。
-回答は「health」「pokemon」「general」のいずれか1単語のみで答えてください。
+回答は「health」「work」「pokemon」「general」のいずれか1単語のみで答えてください。
 
 【分類基準】
 - health: 食事、栄養、カロリー、体重、運動、睡眠、健康に関する相談
+- work: 仕事、ビジネス、メール作成・推敲、タスク、会議、プレゼン、報告書、スケジュール、プログラミング、資料作成・分析
 - pokemon: ポケモン、対戦、育成論、技、特性、タイプ、図鑑、ポケモンのゲーム/アニメに関する話題
-- general: 上記以外の日常会話、仕事、雑談、マーベル、PDF要約、その他の質問
+- general: 上記以外の日常会話、雑談、マーベル、その他の気軽な質問
 
 ユーザーの入力:
 "{text_input}"
@@ -126,7 +140,7 @@ def append_and_save_memory(filename, new_messages):
 with st.sidebar:
     st.title("🤖 J.A.R.V.I.S. Status")
     st.success("☁️ Google Drive 完全同期中")
-    st.info("🧠 カテゴリ自動判別モード稼働中")
+    st.info("🧠 自動判別（健康/仕事/ポケモン/雑談）")
 
     if "display_history" not in st.session_state:
         st.session_state.display_history = []
@@ -156,7 +170,7 @@ with st.sidebar:
 # 4. メインUI
 # ---------------------------------------------------------
 st.title("🤖 J.A.R.V.I.S. Smart Assistant")
-st.caption("会話内容から「健康」「ポケモン」「フリートーク」を自動判別して記憶保存します")
+st.caption("会話内容から「健康」「仕事」「ポケモン」「フリートーク」を自動判別して個別記憶します")
 
 # ---------------------------------------------------------
 # 5. 画面表示
@@ -189,7 +203,7 @@ has_new_pdf = uploaded_pdf and (current_pdf_name != st.session_state.last_proces
 has_new_img = uploaded_image and (current_img_name != st.session_state.last_processed_img)
 
 if has_new_user_input or has_new_pdf or has_new_img:
-    now_str = get_jst_now_str()  # 👈 日本時間（JST）を取得
+    now_str = get_jst_now_str()
     
     if uploaded_pdf:
         st.session_state.last_processed_pdf = current_pdf_name
@@ -244,7 +258,7 @@ if has_new_user_input or has_new_pdf or has_new_img:
                 response = model.generate_content(contents)
                 response_text = f"【分類: {cat_info['name']}】\n\n" + response.text
                 
-                ai_now_str = get_jst_now_str()  # 👈 AIの返答用タイムスタンプもJST
+                ai_now_str = get_jst_now_str()
                 
                 st.caption(f"[{ai_now_str}]")
                 st.write(response_text)
@@ -257,7 +271,7 @@ if has_new_user_input or has_new_pdf or has_new_img:
                 
                 st.session_state.display_history = [user_msg, {"role": "model", "text": response_text, "timestamp": ai_msg["timestamp"]}]
                 
-                # 4. Driveへの「確実な追加保存（append）」の実行
+                # 4. Driveへの追加保存（`jarvis_memory_work.json` 等へ保存されます）
                 append_and_save_memory(cat_info["file"], [user_msg, ai_msg])
 
                 # 健康管理の場合の栄養ログ追加保存
