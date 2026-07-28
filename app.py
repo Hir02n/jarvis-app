@@ -142,6 +142,7 @@ with st.sidebar:
     st.success("☁️ Google Drive 完全同期中")
     st.info("🧠 自動判別（健康/仕事/ポケモン/雑談）")
 
+    # 画面上の対話履歴セッション管理（初期化）
     if "display_history" not in st.session_state:
         st.session_state.display_history = []
 
@@ -174,7 +175,7 @@ st.title("🤖 J.A.R.V.I.S. Smart Assistant")
 st.caption("会話内容から「健康」「仕事」「ポケモン」「フリートーク」を自動判別して個別記憶します")
 
 # ---------------------------------------------------------
-# 5. 画面表示
+# 5. 画面表示（現在のセッション内の全メッセージを表示）
 # ---------------------------------------------------------
 for msg in st.session_state.display_history:
     avatar = "👤" if msg["role"] == "user" else "🤖"
@@ -213,6 +214,11 @@ if has_new_user_input or has_new_pdf or has_new_img:
 
     display_text = user_input if user_input else ("【画像を送信しました】" if uploaded_image else "【PDF資料を送信しました】")
 
+    user_msg = {"role": "user", "text": display_text, "timestamp": now_str}
+    
+    # 💡 ユーザーの入力メッセージを画面用履歴に追加
+    st.session_state.display_history.append(user_msg)
+
     with st.chat_message("user", avatar="👤"):
         st.caption(f"[{now_str}]")
         st.write(display_text)
@@ -225,8 +231,10 @@ if has_new_user_input or has_new_pdf or has_new_img:
                 cat_info = CATEGORIES[cat_key]
                 st.session_state.last_detected_category = cat_info["name"]
                 
-                # 2. 最新の記憶をDriveから直接ロード
-                current_history = load_json_from_drive(cat_info["file"], default_factory=list)
+                # 2. 記憶の準備（画面上の現行セッション履歴 + Driveの過去記憶を統合）
+                drive_history = load_json_from_drive(cat_info["file"], default_factory=list)
+                if not isinstance(drive_history, list):
+                    drive_history = []
 
                 # ポケモンの場合マスターDB（pokemon_master_db.json）の情報を補助でロード
                 matched_info = ""
@@ -243,27 +251,31 @@ if has_new_user_input or has_new_pdf or has_new_img:
                                 matched_info += f"- 覚える技(一部): {', '.join(p_data.get('moves', [])[:10])}...\n"
                                 break
 
-                user_msg = {"role": "user", "text": display_text, "timestamp": now_str}
-
                 # 3. AIモデルの呼び出し準備
                 model = genai.GenerativeModel(
                     model_name=MODEL_NAME,
                     system_instruction=cat_info["prompt"]
                 )
                 
-                context_prompt = f"以下はこれまでの「{cat_info['name']}」に関する記憶です:\n"
-                for h in current_history:
+                # コンテキスト構築（過去ログ ＋ 今回のブラウザ内での会話履歴）
+                context_prompt = f"以下はこれまでの「{cat_info['name']}」に関する過去の記憶です:\n"
+                for h in drive_history:
                     context_prompt += f"- {h['role']}: {h['text']}\n"
                 
                 if matched_info:
                     context_prompt += f"\n{matched_info}\n"
 
-                context_prompt += f"\n上記の記憶・資料を踏まえて、最新の入力に対応してください:\n{display_text}"
+                # 現在ブラウザ上に残っている直近のやり取り（直近最大10件程度）も文脈として明示
+                if len(st.session_state.display_history) > 1:
+                    context_prompt += "\n【今回のセッション内での直近の会話の流れ】:\n"
+                    for h in st.session_state.display_history[:-1]:  # 今回の最新入力以外
+                        context_prompt += f"- {h['role']}: {h['text']}\n"
+
+                context_prompt += f"\n上記の文脈・記憶・資料を踏まえて、最新の入力に対応してください:\n{display_text}"
 
                 # Geminiへ渡すコンテンツ配列を作成
                 contents = []
 
-                # 画像の安全な処理
                 if uploaded_image:
                     uploaded_image.seek(0)
                     img_data = Image.open(uploaded_image)
@@ -271,7 +283,6 @@ if has_new_user_input or has_new_pdf or has_new_img:
                     if cat_key == "health" and not user_input:
                         context_prompt += "\nこの食事画像を分析し、推定カロリーと主要な栄養素を分析レポートとして提示してください。"
 
-                # PDFの安全な処理 (dict形式でmime_typeとdataを指定)
                 if uploaded_pdf:
                     uploaded_pdf.seek(0)
                     pdf_bytes = uploaded_pdf.read()
@@ -280,7 +291,6 @@ if has_new_user_input or has_new_pdf or has_new_img:
                         "data": pdf_bytes
                     })
 
-                # テキストプロンプトを追加
                 contents.append(context_prompt)
 
                 # API実行
@@ -294,14 +304,15 @@ if has_new_user_input or has_new_pdf or has_new_img:
                 
                 ai_msg = {
                     "role": "model",
-                    "text": response.text,
+                    "text": response_text,
                     "timestamp": ai_now_str
                 }
                 
-                st.session_state.display_history = [user_msg, {"role": "model", "text": response_text, "timestamp": ai_msg["timestamp"]}]
+                # 💡 AIの応答メッセージを画面用履歴に追加（上書きせず追加していく）
+                st.session_state.display_history.append(ai_msg)
                 
-                # 4. Driveへの追加保存（`jarvis_memory_work.json` 等へ保存）
-                append_and_save_memory(cat_info["file"], [user_msg, ai_msg])
+                # 4. Driveへの追加保存（`jarvis_memory_◯◯.json` へ永続化）
+                append_and_save_memory(cat_info["file"], [user_msg, {"role": "model", "text": response.text, "timestamp": ai_now_str}])
 
                 # 健康管理の場合の栄養ログ追加保存
                 if cat_key == "health" and uploaded_image:
