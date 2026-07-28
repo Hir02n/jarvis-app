@@ -154,6 +154,7 @@ with st.sidebar:
     
     uploaded_image = st.file_uploader("📷 画像（食事・その他）", type=["jpg", "jpeg", "png"])
     if uploaded_image:
+        uploaded_image.seek(0)
         img_preview = Image.open(uploaded_image)
         st.image(img_preview, caption="添付画像", use_container_width=True)
         
@@ -227,9 +228,24 @@ if has_new_user_input or has_new_pdf or has_new_img:
                 # 2. 最新の記憶をDriveから直接ロード
                 current_history = load_json_from_drive(cat_info["file"], default_factory=list)
 
+                # ポケモンの場合マスターDB（pokemon_master_db.json）の情報を補助でロード
+                matched_info = ""
+                if cat_key == "pokemon":
+                    pokemon_db = load_json_from_drive("pokemon_master_db.json", default_factory=dict)
+                    if pokemon_db and isinstance(pokemon_db, dict):
+                        for p_id, p_data in pokemon_db.items():
+                            p_name = p_data.get("name", "")
+                            if p_name and p_name in display_text:
+                                matched_info += f"\n【{p_name}の基本データ】\n"
+                                matched_info += f"- タイプ: {', '.join(p_data.get('types', []))}\n"
+                                matched_info += f"- 特性: {', '.join(p_data.get('abilities', []))}\n"
+                                matched_info += f"- 種族値: {p_data.get('stats', {})}\n"
+                                matched_info += f"- 覚える技(一部): {', '.join(p_data.get('moves', [])[:10])}...\n"
+                                break
+
                 user_msg = {"role": "user", "text": display_text, "timestamp": now_str}
 
-                # 3. AIモデルの呼び出し
+                # 3. AIモデルの呼び出し準備
                 model = genai.GenerativeModel(
                     model_name=MODEL_NAME,
                     system_instruction=cat_info["prompt"]
@@ -239,22 +255,35 @@ if has_new_user_input or has_new_pdf or has_new_img:
                 for h in current_history:
                     context_prompt += f"- {h['role']}: {h['text']}\n"
                 
+                if matched_info:
+                    context_prompt += f"\n{matched_info}\n"
+
                 context_prompt += f"\n上記の記憶・資料を踏まえて、最新の入力に対応してください:\n{display_text}"
 
+                # Geminiへ渡すコンテンツ配列を作成
                 contents = []
-                if uploaded_image:
-                    contents.append(Image.open(uploaded_image))
-                    if cat_key == "health" and not user_input:
-                        context_prompt += "\nこの食事画像を分析し、推定カロリーと栄養素をレポートしてください。"
 
+                # 画像の安全な処理
+                if uploaded_image:
+                    uploaded_image.seek(0)
+                    img_data = Image.open(uploaded_image)
+                    contents.append(img_data)
+                    if cat_key == "health" and not user_input:
+                        context_prompt += "\nこの食事画像を分析し、推定カロリーと主要な栄養素を分析レポートとして提示してください。"
+
+                # PDFの安全な処理 (dict形式でmime_typeとdataを指定)
                 if uploaded_pdf:
+                    uploaded_pdf.seek(0)
+                    pdf_bytes = uploaded_pdf.read()
                     contents.append({
                         "mime_type": "application/pdf",
-                        "data": uploaded_pdf.getvalue()
+                        "data": pdf_bytes
                     })
 
+                # テキストプロンプトを追加
                 contents.append(context_prompt)
 
+                # API実行
                 response = model.generate_content(contents)
                 response_text = f"【分類: {cat_info['name']}】\n\n" + response.text
                 
@@ -271,7 +300,7 @@ if has_new_user_input or has_new_pdf or has_new_img:
                 
                 st.session_state.display_history = [user_msg, {"role": "model", "text": response_text, "timestamp": ai_msg["timestamp"]}]
                 
-                # 4. Driveへの追加保存（`jarvis_memory_work.json` 等へ保存されます）
+                # 4. Driveへの追加保存（`jarvis_memory_work.json` 等へ保存）
                 append_and_save_memory(cat_info["file"], [user_msg, ai_msg])
 
                 # 健康管理の場合の栄養ログ追加保存
