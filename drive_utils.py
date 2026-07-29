@@ -21,9 +21,14 @@ def load_json_from_drive(filename: str, default_factory=list):
     service = get_drive_service()
     folder_id = st.secrets["DRIVE_FOLDER_ID"]
     
-    # フォルダ内の指定ファイルを検索
+    # フォルダ内の指定ファイルを検索（supportsAllDrives / includeItemsFromAllDrives を追加）
     query = f"'{folder_id}' in parents and name='{filename}' and trashed=false"
-    results = service.files().list(q=query, fields="files(id, name)").execute()
+    results = service.files().list(
+        q=query, 
+        fields="files(id, name)",
+        supportsAllDrives=True,
+        includeItemsFromAllDrives=True
+    ).execute()
     items = results.get('files', [])
     
     if not items:
@@ -56,19 +61,33 @@ def save_json_to_drive(filename: str, data):
     json_str = json.dumps(data, ensure_ascii=False, indent=4)
     media = MediaIoBaseUpload(io.BytesIO(json_str.encode('utf-8')), mimetype='application/json')
     
-    # 既存ファイルを検索
+    # 既存ファイルを検索（supportsAllDrives / includeItemsFromAllDrives を追加）
     query = f"'{folder_id}' in parents and name='{filename}' and trashed=false"
-    results = service.files().list(q=query, fields="files(id, name)").execute()
+    results = service.files().list(
+        q=query, 
+        fields="files(id, name)",
+        supportsAllDrives=True,
+        includeItemsFromAllDrives=True
+    ).execute()
     items = results.get('files', [])
     
     if items:
-        # 既存ファイルを更新
+        # 既存ファイルを更新（supportsAllDrives=True を追加）
         file_id = items[0]['id']
-        service.files().update(fileId=file_id, media_body=media).execute()
+        service.files().update(
+            fileId=file_id, 
+            media_body=media,
+            supportsAllDrives=True
+        ).execute()
     else:
-        # 新規ファイルを作成
+        # 新規ファイルを作成（supportsAllDrives=True を追加）
         file_metadata = {
             'name': filename,
             'parents': [folder_id]
         }
-        service.files().create(body=file_metadata, media_body=media, fields='id').execute()
+        service.files().create(
+            body=file_metadata, 
+            media_body=media, 
+            fields='id',
+            supportsAllDrives=True
+        ).execute()
